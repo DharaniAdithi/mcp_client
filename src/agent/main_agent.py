@@ -66,14 +66,18 @@ class QuizMainAgent:
         try:
             logger.info("Setting up LangGraph agent with PostgreSQL checkpointing")
 
+            # FIX: Added kwargs to enable autocommit mode
             self._pool = AsyncConnectionPool(
                 conninfo=self.database_uri,
                 max_size=10,
                 open=False,
+                kwargs={"autocommit": True},  # <--- THIS IS THE CRITICAL FIX
             )
             await self._pool.open()
 
             self._checkpointer = AsyncPostgresSaver(self._pool)
+            
+            # Now setup() will run without being wrapped in a transaction block
             await self._checkpointer.setup()
 
             self._agent = create_agent(
@@ -196,9 +200,23 @@ class QuizMainAgent:
             logger.info(f"Collected {len(user_answers)} answers from user")
 
             result = await agent.ainvoke(
-                Command(resume=user_answers),
-                config,
-            )
+                    Command(
+                        resume=user_answers,
+                        update={
+                            "current_step": "answer_evaluator",
+                            "answers": user_answers,
+                            "messages": [
+                                HumanMessage(content=(
+                                    f"Answers collected: {user_answers}. "
+                                    f"current_step is now answer_evaluator. "
+                                    f"Call evaluate_answers tool immediately."
+                                ))
+                            ]
+                        }
+                    ),
+                    config,
+                )
+
 
             feedback = result.get("feedback", "").strip()
 
