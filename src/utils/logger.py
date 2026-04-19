@@ -1,6 +1,5 @@
 import logging
 import sys
-from typing import Optional
 from src.constant.constant import DATE_FORMAT, LOG_FORMAT
 
 def setup_logger(

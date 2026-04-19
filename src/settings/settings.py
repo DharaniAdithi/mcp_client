@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -74,7 +75,7 @@ class Settings:
     pep8_mcp_server_url: Optional[str] = None
     duckduckgo_mcp_server_url: Optional[str] = None
 
-
+@lru_cache
 def load_settings() -> Settings:
     """
     Load and construct settings from environment variables.

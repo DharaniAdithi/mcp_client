@@ -71,7 +71,7 @@ class ReviewAgent:
 
             self.llm = initialize_language_model(
                 max_tokens=1000,
-                temperature=0.0  # Lower temperature for consistent evaluation
+                temperature=0.0 
             )
             
             self.prompt = SystemPrompt()

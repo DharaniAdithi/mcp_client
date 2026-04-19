@@ -147,16 +147,6 @@ class Database:
         except Exception as connection_error:
             logger.error(f"Database connection test failed: {connection_error}")
             return False
-    
-    def dispose_pool(self) -> None:
-        """
-        Close all database connections in the pool.
-        
-        Useful for graceful shutdown or connection pool refresh.
-        """
-        if self._engine is not None:
-            self._engine.dispose()
-            logger.info("Database connection pool disposed")
 
 
 database = Database()
