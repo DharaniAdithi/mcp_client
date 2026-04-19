@@ -1,27 +1,34 @@
 from datetime import datetime, timezone
-from models.models import APIResponse
-from typing import Dict,Optional,Any
-import traceback
+from typing import Dict, Optional, Any
 import logging
-from dotenv import load_dotenv
-from langchain_aws import ChatBedrock
-import boto3
-import os
-from models.models import Error
-from datetime import datetime, timezone
-load_dotenv()
 
-logger=logging.getLogger(__name__)
+from src.models.models import APIResponse, ErrorInfo
+from src.settings.settings import settings
+from src.utils.error_codes import ApplicationError, ErrorCode
 
-def success_response(
+logger = logging.getLogger(__name__)
+
+
+def create_success_response(
     status_code: int,
     message: str,
-    data: Optional[Dict],
+    data: Optional[Dict[str, Any]],
     request_id: str,
     timestamp: datetime
 ) -> APIResponse:
-
-
+    """
+    Create a successful API response.
+    
+    Args:
+        status_code: HTTP status code (typically 200).
+        message: Human-readable success message.
+        data: Response payload data.
+        request_id: Unique request identifier.
+        timestamp: Request timestamp.
+    
+    Returns:
+        APIResponse: Structured success response object.
+    """
     return APIResponse(
         status_code=status_code,
         status="success",
@@ -32,50 +39,138 @@ def success_response(
         timestamp=timestamp
     )
 
-def error_response(
+
+def create_error_response(
     status_code: int,
     message: str,
-    error: Any,
+    error_message: str,
     request_id: str,
     timestamp: datetime
 ) -> APIResponse:
+    """
+    Create an error API response.
+    
+    Args:
+        status_code: HTTP status code (4xx or 5xx).
+        message: Summary message.
+        error_message: Detailed error message.
+        request_id: Unique request identifier.
+        timestamp: Request timestamp.
+    
+    Returns:
+        APIResponse: Structured error response object.
+    """
     return APIResponse(
         status_code=status_code,
         status="error",
         message=message,
         data=None,
-        error=Error(  
-            error=str(error),
-        ),
+        error=ErrorInfo(error=error_message),
         request_id=request_id,
-        timestamp = timestamp
+        timestamp=timestamp
     )
 
-def log_error(file_name: str,function_name:str,exception:Exception):
-    from repository.repository import ErrorLogRepository
+
+def get_bedrock_client():
+    """
+    Create and configure AWS Bedrock runtime client.
+    
+    Uses AWS credentials from settings. Client is configured with the
+    appropriate region for Bedrock API calls.
+    
+    Returns:
+        boto3.client: Configured Bedrock runtime client.
+        
+    Raises:
+        ImportError: If boto3 is not installed.
+    """
     try:
-        repo=ErrorLogRepository()
-        error_message=str(exception)
-        stack_trace=traceback.format_exc()
-        full_error=f"{error_message}|TRACE: {stack_trace}"
-        repo.store_error(file_name=file_name,function_name=function_name,error=full_error)
-    except Exception as e:
-        logger.exception("Failed to store error via ErrorLogRepository: %s", e)
+        import boto3
+    except ImportError as import_error:
+        logger.error("boto3 library is required for AWS Bedrock integration")
+        raise ImportError(
+            "boto3 is not installed. Install it with: pip install boto3"
+        ) from import_error
+    
+    try:
+        client = boto3.client(
+            service_name="bedrock-runtime",
+            region_name=settings.aws.region
+        )
+        logger.debug(f"Bedrock client created for region: {settings.aws.region}")
+        return client
+    except Exception as bedrock_error:
+        logger.error(f"Failed to create Bedrock client: {bedrock_error}")
+        raise
 
-def _get_bedrock_client():
-    return boto3.client(
-        service_name="bedrock-runtime",
-        region_name=os.getenv("AWS_REGION")
-    )
 
-def get_llm(max_tokens=500, temperature=0.7):
+def initialize_language_model(
+    max_tokens: int = 500,
+    temperature: float = 0.7
+):
+    """
+    Initialize and configure the language model client.
+    
+    Creates a ChatBedrock instance configured with the specified parameters.
+    The model ID and provider are sourced from application settings.
+    
+    Args:
+        max_tokens: Maximum tokens for model output (default: 500).
+        temperature: Sampling temperature for generation (default: 0.7).
+    
+    Returns:
+        ChatBedrock: Configured language model instance.
+        
+    Raises:
+        ImportError: If langchain_aws module is not installed.
+        LLMError: If LLM client initialization fails.
+    
+    Example:
+        >>> llm = initialize_language_model(max_tokens=1000, temperature=0.5)
+        >>> response = llm.invoke("What is Python?")
+    """
+    try:
+        from langchain_aws import ChatBedrock
+    except ImportError as import_error:
+        logger.error("langchain_aws module is required for Bedrock integration")
+        raise ImportError(
+            "langchain_aws is not installed. Install it with: pip install langchain-aws"
+        ) from import_error
+    
+    try:
+        bedrock_client = get_bedrock_client()
+        
+        llm = ChatBedrock(
+            client=bedrock_client,
+            model_id=settings.aws.model_id,
+            provider=settings.aws.provider,
+            model_kwargs={
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+        )
+        
+        logger.info(
+            f"Language model initialized: {settings.aws.provider} - "
+            f"max_tokens={max_tokens}, temperature={temperature}"
+        )
+        return llm
+        
+    except Exception as llm_error:
+        logger.error(f"Failed to initialize language model: {llm_error}", exc_info=True)
+        raise ApplicationError(
+            error_code=ErrorCode.LLMODEL_ERROR,
+            message="Failed to initialize language model",
+            details={"model_id": settings.aws.model_id},
+            original_exception=llm_error
+        )
 
-    return ChatBedrock(
-        client=_get_bedrock_client(),
-        model_id=os.getenv("MODEL_ID"),
-        provider=os.getenv("PROVIDER"),
-        model_kwargs={
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        },
-    )
+
+def get_current_timestamp() -> datetime:
+    """
+    Get current UTC timestamp.
+    
+    Returns:
+        datetime: Current UTC datetime.
+    """
+    return datetime.now(timezone.utc)
